@@ -25,7 +25,8 @@ layout(location=2) in vec4  i_radii;         // TL TR BR BL
 layout(location=3) in vec4  i_color;         // RGBA  (ubyte4n → vec4)
 layout(location=4) in vec4  i_border_color;  // RGBA  (ubyte4n → vec4)
 layout(location=5) in float i_border_width;
-layout(location=6) in vec4  i_clip;          // x y w h (pixels, 0-size = disabled)
+layout(location=6) in vec4  i_clip;           // x y w h (pixels, 0-size = disabled)
+layout(location=7) in float i_shadow_softness; // 0 = normal rect, >0 = shadow falloff
 
 // Outputs to fragment shader
 out vec2  v_frag_pos;
@@ -36,6 +37,7 @@ out vec4  v_color;
 out vec4  v_border_color;
 out float v_border_width;
 out vec4  v_clip;
+out float v_shadow_softness;
 
 void main() {
     // Generate quad corners from gl_VertexID (triangle strip: BL BR TL TR)
@@ -61,7 +63,8 @@ void main() {
     v_color        = i_color;
     v_border_color = i_border_color;
     v_border_width = i_border_width;
-    v_clip         = i_clip;
+    v_clip             = i_clip;
+    v_shadow_softness  = i_shadow_softness;
 }
 @end
 
@@ -77,6 +80,7 @@ in vec4  v_color;
 in vec4  v_border_color;
 in float v_border_width;
 in vec4  v_clip;
+in float v_shadow_softness;
 
 out vec4 frag_color;
 
@@ -100,7 +104,6 @@ float sdf_rect(vec2 p, vec2 half_size, vec4 radii) {
 
 void main() {
     // ── Clip rect ────────────────────────────────────────────────────────────
-    // clip.zw == 0 means "no clip", otherwise test against the pixel position.
     if (v_clip.z > 0.0) {
         vec2 clip_min = v_clip.xy;
         vec2 clip_max = v_clip.xy + v_clip.zw;
@@ -110,33 +113,38 @@ void main() {
         }
     }
 
-    // ── Rounded rect SDF ─────────────────────────────────────────────────────
+    // ── SDF ──────────────────────────────────────────────────────────────────
     vec2  center    = v_rect_pos + v_rect_size * 0.5;
     vec2  half_size = v_rect_size * 0.5;
     vec2  p         = v_frag_pos - center;
     float dist      = sdf_rect(p, half_size, v_radii);
     float aa        = fwidth(dist);
 
-    // Outer shape mask — 1 inside the rect, 0 outside, smooth at the edge
+    // ── Shadow mode ──────────────────────────────────────────────────────────
+    // Shadow rects use an exponential falloff from the SDF distance instead
+    // of a hard edge. The rect is expanded beyond the widget bounds on the CPU
+    // so the falloff has room to fade out. Drawn before the widget rect.
+    if (v_shadow_softness > 0.0) {
+        float falloff = exp(-max(dist, 0.0) / v_shadow_softness);
+        if (falloff < 0.001) discard;
+        frag_color = vec4(v_color.rgb, v_color.a * falloff);
+        return;
+    }
+
+    // ── Normal rect mode ─────────────────────────────────────────────────────
     float shape_mask = 1.0 - smoothstep(-aa, aa, dist);
     if (shape_mask <= 0.001) discard;
 
-    // ── Fill layer ───────────────────────────────────────────────────────────
-    // fill alpha can be 0 (transparent interior) — that's valid.
+    // Fill layer — alpha can be 0 (outline-only rects)
     vec4 out_color = vec4(v_color.rgb, v_color.a * shape_mask);
 
-    // ── Border layer ─────────────────────────────────────────────────────────
+    // Border layer — composited on top independently
     if (v_border_width > 0.0 && v_border_color.a > 0.0) {
-        // Inner edge SDF — positive outside the inset rect, negative inside
-        float inner = sdf_rect(p, half_size - v_border_width, v_radii);
-
-        // Border ring = inside outer shape AND outside inner shape
+        float inner       = sdf_rect(p, half_size - v_border_width, v_radii);
         float border_mask = shape_mask * (1.0 - smoothstep(-aa, aa, -inner));
-
-        // Composite border on top of fill (standard over operation)
-        float ba      = v_border_color.a * border_mask;
-        out_color.rgb = mix(out_color.rgb, v_border_color.rgb, ba);
-        out_color.a   = out_color.a + ba * (1.0 - out_color.a);
+        float ba          = v_border_color.a * border_mask;
+        out_color.rgb     = mix(out_color.rgb, v_border_color.rgb, ba);
+        out_color.a       = out_color.a + ba * (1.0 - out_color.a);
     }
 
     frag_color = out_color;

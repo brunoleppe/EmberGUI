@@ -15,17 +15,18 @@
 
 #define MAX_INSTANCES 4096
 
-struct RectInstance {
-    float   x, y, w, h;          // 16B
-    float   radii[4];             // 16B
-    uint8_t color[4];             //  4B
-    uint8_t border_color[4];      //  4B
-    float   border_width;         //  4B
-    float   shadow_softness;      //  4B
-    float   clip[4];              // 16B
-    uint8_t layer;                //  1B
-    uint8_t _pad[3];              //  3B
-    float   _reserved[13];         // 52B  ← room for tex coords, material id, etc
+struct RectInstance
+{
+    float x, y, w, h; // 16B
+    float radii[4]; // 16B
+    uint8_t color[4]; //  4B
+    uint8_t border_color[4]; //  4B
+    float border_width; //  4B
+    float shadow_softness; //  4B
+    float clip[4]; // 16B
+    uint8_t layer; //  1B
+    uint8_t _pad[3]; //  3B
+    float _reserved[13]; // 52B  ← room for tex coords, material id, etc
 };
 
 
@@ -92,6 +93,11 @@ void rect_renderer_init(RectRenderer& r)
         .offset = offsetof(RectInstance, border_width), .format = SG_VERTEXFORMAT_FLOAT
     }; // i_border_width
     pip_desc.layout.attrs[6] = {.offset = offsetof(RectInstance, clip), .format = SG_VERTEXFORMAT_FLOAT4}; // i_clip
+
+    pip_desc.layout.attrs[7] = {
+        .offset = offsetof(RectInstance, shadow_softness),
+        .format = SG_VERTEXFORMAT_FLOAT
+    };
 
     // Standard alpha blending
     pip_desc.colors[0].blend.enabled = true;
@@ -162,16 +168,7 @@ static void frame(void)
 {
     // ── Push test rects ───────────────────────────────────────────────────────
 
-    RectInstance outline = {};
-    outline.x = 400;
-    outline.y = 100;
-    outline.w = 200;
-    outline.h = 150;
-    outline.radii[0] = outline.radii[1] = outline.radii[2] = outline.radii[3] = 8.0f;
-    color_hex(outline.color, 0x00000000);
-    color_hex(outline.border_color, 0xffffffff);
-    outline.border_width = 5.0f;
-    rect_push(r, outline);
+
     // Parent container — this is the visible "scroll panel"
     RectInstance panel = {};
     panel.x = 100;
@@ -183,6 +180,16 @@ static void frame(void)
     color_hex(panel.border_color, 0x8888AAFF);
     panel.border_width = 1.5f;
     // panel itself is not clipped
+    RectInstance shadow = {};
+    float spread = 10.0f;
+    shadow.x = panel.x - spread;
+    shadow.y = panel.y - spread;
+    shadow.w = panel.w + spread * 2;
+    shadow.h = panel.h + spread * 2;
+    memcpy(shadow.radii, panel.radii, sizeof(panel.radii));
+    color_hex(shadow.color, 0x00000099);
+    shadow.shadow_softness = 100.0f;
+    rect_push(r, shadow);
     rect_push(r, panel);
 
     // Child rect — larger than the panel, should be clipped to panel bounds
@@ -202,8 +209,16 @@ static void frame(void)
     child.clip[2] = 198; // panel.w - border*2
     child.clip[3] = 148; // panel.h - border*2
     rect_push(r, child);
-
-
+    RectInstance outline = {};
+    outline.x = 400;
+    outline.y = 100;
+    outline.w = 200;
+    outline.h = 150;
+    outline.radii[0] = outline.radii[1] = outline.radii[2] = outline.radii[3] = 8.0f;
+    color_hex(outline.color, 0x00000000);
+    color_hex(outline.border_color, 0xffffffff);
+    outline.border_width = 5.0f;
+    rect_push(r, outline);
 
     // ── Draw ──────────────────────────────────────────────────────────────────
     sg_begin_pass({.action = r.pass_action, .swapchain = sglue_swapchain()});
