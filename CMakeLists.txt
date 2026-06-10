@@ -52,3 +52,4 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 target_add_sokol_shader(EmberGUI Shaders/triangle.glsl)
+target_add_sokol_shader(EmberGUI Shaders/rect.glsl)
